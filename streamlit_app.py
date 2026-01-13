@@ -40,8 +40,9 @@ class LSTMModel(nn.Module):
 def load_data(path):
     df = pd.read_csv(path, sep=";", na_values=["?"])
     df.dropna(inplace=True)
-    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], dayfirst=True)
-    df.drop(['Date','Time'], axis=1, inplace=True)
+    if 'Date' in df.columns and 'Time' in df.columns:
+        df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], dayfirst=True)
+        df.drop(['Date','Time'], axis=1, inplace=True)
     df['Global_active_power'] = df['Global_active_power'].astype(float)
     return df
 
@@ -57,7 +58,7 @@ future_steps = st.sidebar.slider("Number of Future Steps to Predict", 1, 24, 3)
 chart_theme = st.sidebar.radio("Chart Theme", ("Light","Dark"))
 
 # -----------------------------
-# Dynamic background for Light/Dark
+# Dynamic background
 # -----------------------------
 if chart_theme == "Light":
     bg_css = """
@@ -67,7 +68,7 @@ if chart_theme == "Light":
         animation: gradientBG 20s ease infinite;
     }
     """
-else:  # Dark theme
+else:
     bg_css = """
     [data-testid="stAppViewContainer"] {
         background: radial-gradient(circle at top left, #0f0c29, #302b63, #24243e, #151515);
@@ -79,14 +80,12 @@ st.markdown(f"""
 <style>
 {bg_css}
 
-/* Gradient animation */
 @keyframes gradientBG {{
     0%{{background-position:0% 50%;}}
     50%{{background-position:100% 50%;}}
     100%{{background-position:0% 50%;}}
 }}
 
-/* Glowing metric cards */
 .card {{
     background-color: rgba(255, 255, 255, 0.85);
     padding: 15px;
@@ -117,27 +116,8 @@ st.title("⚡ Energy Consumption Prediction")
 st.markdown("LSTM-based time series forecasting with **PyTorch**")
 
 # -----------------------------
-# Load model & scaler
+# Load scaler only (model deferred)
 # -----------------------------
-@st.cache_resource
-def load_model(path, device):
-    model = LSTMModel().to(device)
-    if os.path.exists(path):
-        state_dict = torch.load(path, map_location=device)
-        try:
-            model.load_state_dict(state_dict)
-        except RuntimeError as e:
-            print("RuntimeError loading state_dict:", e)
-            # fallback to non-strict loading
-            model.load_state_dict(state_dict, strict=False)
-            print("Loaded state_dict with strict=False")
-        model.eval()
-    else:
-        st.error(f"Model not found at {path}")
-    return model
-
-model = load_model(MODEL_PATH, device)
-
 if os.path.exists(SCALER_PATH):
     scaler = joblib.load(SCALER_PATH)
 else:
@@ -146,7 +126,7 @@ else:
 scaled_values = scaler.transform(data["Global_active_power"].values.reshape(-1,1))
 
 # -----------------------------
-# Gradient colors for charts
+# Helper for gradient colors
 # -----------------------------
 def gradient_colors(n, color1="#1f77b4", color2="#ff5733"):
     return [f"rgba({int(int(color1[1:3],16)*(1-i/n)+int(color2[1:3],16)*(i/n))},"
@@ -180,13 +160,31 @@ if show_chart:
     st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
-# Prediction
+# Prediction button
 # -----------------------------
 st.subheader("⚡ Predict Next Energy Consumption")
+
+@st.cache_resource
+def load_model(path):
+    model = LSTMModel().to(device)
+    if os.path.exists(path):
+        state_dict = torch.load(path, map_location=device)
+        try:
+            model.load_state_dict(state_dict)
+        except RuntimeError as e:
+            print("RuntimeError loading state_dict:", e)
+            model.load_state_dict(state_dict, strict=False)
+        model.eval()
+    else:
+        st.error(f"Model not found at {path}")
+    return model
+
 if st.button("Predict"):
+    # Load model only when needed
+    model = load_model(MODEL_PATH)
+
     seq_len = seq_len_slider
     steps = future_steps
-
     recent_seq = scaled_values[-seq_len:].reshape(-1,1)
     predictions = []
 
