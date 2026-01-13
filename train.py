@@ -1,78 +1,71 @@
-import os
 import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import DataLoader, TensorDataset
 import joblib
+from model import LSTMModel
 
 # -----------------------------
-# CONFIG (FAST MODE)
+# Configuration
 # -----------------------------
 SEQ_LEN = 24
-EPOCHS = 1              # VERY FAST
-HIDDEN_SIZE = 32        # smaller model
+EPOCHS = 20
 LR = 0.001
+BATCH_SIZE = 32
 
 # -----------------------------
-# LOAD SMALL DATASET
+# Load Dataset
 # -----------------------------
-data = pd.read_csv("data/energy_small.csv", sep=";")
-data = data.tail(5000)  # keep last 5k rows only
+data = pd.read_csv("data/energy.csv", sep=";")
+values = data.iloc[:, 1].values.reshape(-1, 1)
 
-values = data["Global_active_power"].astype(float).values.reshape(-1, 1)
-
-# -----------------------------
-# SCALE
-# -----------------------------
 scaler = MinMaxScaler()
 scaled = scaler.fit_transform(values)
+joblib.dump(scaler, "model/scaler.save")
 
 # -----------------------------
-# CREATE SEQUENCES
+# Create sequences
 # -----------------------------
-X, y = [], []
-for i in range(len(scaled) - SEQ_LEN):
-    X.append(scaled[i:i + SEQ_LEN])
-    y.append(scaled[i + SEQ_LEN])
+def create_sequences(data, seq_len):
+    X, y = [], []
+    for i in range(len(data) - seq_len):
+        X.append(data[i:i+seq_len])
+        y.append(data[i+seq_len])
+    return np.array(X), np.array(y)
+
+X, y = create_sequences(scaled, SEQ_LEN)
 
 X = torch.tensor(X, dtype=torch.float32)
 y = torch.tensor(y, dtype=torch.float32)
 
-# -----------------------------
-# MODEL
-# -----------------------------
-class LSTMModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(1, HIDDEN_SIZE, batch_first=True)
-        self.fc = nn.Linear(HIDDEN_SIZE, 1)
+dataset = TensorDataset(X, y)
+loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1])
-
-model = LSTMModel()
+# -----------------------------
+# Model
+# -----------------------------
+model = LSTMModel(input_size=1, hidden_size=50, num_layers=1)
 criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 # -----------------------------
-# TRAIN (VERY FAST)
+# Training
 # -----------------------------
-model.train()
-optimizer.zero_grad()
-output = model(X)
-loss = criterion(output, y)
-loss.backward()
-optimizer.step()
+for epoch in range(EPOCHS):
+    for xb, yb in loader:
+        preds = model(xb)
+        loss = criterion(preds, yb)
 
-print("Training complete")
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    print(f"Epoch {epoch+1}/{EPOCHS}, Loss: {loss.item():.4f}")
 
 # -----------------------------
-# SAVE
+# Save model
 # -----------------------------
-os.makedirs("model", exist_ok=True)
-torch.save(model, "model/lstm_model.pt")
-joblib.dump(scaler, "model/scaler.save")
-
-print("Model and scaler saved")
+torch.save(model.state_dict(), "model/lstm_model.pt")
+print("Model saved successfully")
