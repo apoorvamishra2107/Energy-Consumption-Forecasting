@@ -1,5 +1,6 @@
 import streamlit as st
 import torch
+import torch.nn as nn
 import pandas as pd
 import joblib
 import numpy as np
@@ -13,11 +14,32 @@ st.set_page_config(
 )
 
 # -----------------------------
-# CACHED LOADERS (CRITICAL)
+# MODEL DEFINITION (MUST MATCH train.py)
+# -----------------------------
+SEQ_LEN = 24
+HIDDEN_SIZE = 32
+
+class LSTMModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lstm = nn.LSTM(1, HIDDEN_SIZE, batch_first=True)
+        self.fc = nn.Linear(HIDDEN_SIZE, 1)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        return self.fc(out[:, -1])
+
+# -----------------------------
+# CACHED LOADERS
 # -----------------------------
 @st.cache_resource
 def load_model():
-    model = torch.load("model/lstm_model.pt", map_location="cpu")
+    model = LSTMModel()
+    state_dict = torch.load(
+        "model/lstm_model.pt",
+        map_location="cpu"
+    )
+    model.load_state_dict(state_dict)
     model.eval()
     return model
 
@@ -39,7 +61,7 @@ data = load_data()
 st.title("⚡ Energy Consumption Forecasting")
 
 st.sidebar.header("Controls")
-SEQ_LEN = st.sidebar.slider("Sequence Length", 12, 48, 24)
+seq_len = st.sidebar.slider("Sequence Length", 12, 48, 24)
 
 st.subheader("Recent Energy Usage")
 st.line_chart(
@@ -52,10 +74,10 @@ st.line_chart(
 # PREDICTION
 # -----------------------------
 if st.button("Predict Next Consumption"):
-    recent = data["Global_active_power"].astype(float).values[-SEQ_LEN:]
+    recent = data["Global_active_power"].astype(float).values[-seq_len:]
     recent = recent.reshape(-1, 1)
-    scaled = scaler.transform(recent)
 
+    scaled = scaler.transform(recent)
     seq_tensor = torch.tensor(scaled, dtype=torch.float32).unsqueeze(0)
 
     with torch.no_grad():
@@ -64,3 +86,4 @@ if st.button("Predict Next Consumption"):
     prediction = scaler.inverse_transform([[pred_scaled]])[0][0]
 
     st.success(f"Predicted Next Value: {prediction:.3f} kW")
+
