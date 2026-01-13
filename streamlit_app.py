@@ -1,89 +1,39 @@
 import streamlit as st
 import torch
-import torch.nn as nn
+import numpy as np
 import pandas as pd
 import joblib
-import numpy as np
+from model import LSTMModel
 
-# -----------------------------
-# PAGE CONFIG
-# -----------------------------
-st.set_page_config(
-    page_title="Energy Consumption Forecasting",
-    layout="wide"
-)
-
-# -----------------------------
-# MODEL DEFINITION (MUST MATCH train.py)
-# -----------------------------
 SEQ_LEN = 24
-HIDDEN_SIZE = 32
+MODEL_PATH = "model/lstm_model.pt"
+SCALER_PATH = "model/scaler.save"
 
-class LSTMModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(1, HIDDEN_SIZE, batch_first=True)
-        self.fc = nn.Linear(HIDDEN_SIZE, 1)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1])
-
-# -----------------------------
-# CACHED LOADERS
-# -----------------------------
 @st.cache_resource
 def load_model():
-    model = LSTMModel()
-    state_dict = torch.load(
-        "model/lstm_model.pt",
-        map_location="cpu"
-    )
+    model = LSTMModel(input_size=1, hidden_size=50, num_layers=1)
+    state_dict = torch.load(MODEL_PATH, map_location="cpu")
     model.load_state_dict(state_dict)
     model.eval()
     return model
 
-@st.cache_resource
-def load_scaler():
-    return joblib.load("model/scaler.save")
-
-@st.cache_data
-def load_data():
-    return pd.read_csv("data/energy_small.csv", sep=";")
-
 model = load_model()
-scaler = load_scaler()
-data = load_data()
+scaler = joblib.load(SCALER_PATH)
 
-# -----------------------------
-# UI
-# -----------------------------
-st.title("⚡ Energy Consumption Forecasting")
+st.title("Energy Consumption Forecast")
 
-st.sidebar.header("Controls")
-seq_len = st.sidebar.slider("Sequence Length", 12, 48, 24)
+uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
-st.subheader("Recent Energy Usage")
-st.line_chart(
-    data["Global_active_power"]
-    .astype(float)
-    .tail(300)
-)
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    values = df.iloc[:, 1].values.reshape(-1, 1)
+    scaled = scaler.transform(values)
 
-# -----------------------------
-# PREDICTION
-# -----------------------------
-if st.button("Predict Next Consumption"):
-    recent = data["Global_active_power"].astype(float).values[-seq_len:]
-    recent = recent.reshape(-1, 1)
-
-    scaled = scaler.transform(recent)
-    seq_tensor = torch.tensor(scaled, dtype=torch.float32).unsqueeze(0)
+    seq = scaled[-SEQ_LEN:]
+    seq = torch.tensor(seq, dtype=torch.float32).unsqueeze(0)
 
     with torch.no_grad():
-        pred_scaled = model(seq_tensor).item()
+        prediction = model(seq).item()
 
-    prediction = scaler.inverse_transform([[pred_scaled]])[0][0]
-
-    st.success(f"Predicted Next Value: {prediction:.3f} kW")
-
+    prediction = scaler.inverse_transform([[prediction]])[0][0]
+    st.success(f"Predicted Energy Consumption: {prediction:.2f}")
